@@ -1,9 +1,12 @@
 import gc, os, numpy as np
+from moby2.util.database import TODList
+import traceback
+from deprecated import deprecated
+import logging
+logging.basicConfig(format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
+
 from todloop.utils import append2file
 
-import logging
-import traceback
-logging.basicConfig(format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
 
 class TODLoop:
     """Main driving class for looping through coincident signals of different TODs"""
@@ -12,16 +15,16 @@ class TODLoop:
         self._veto = False
         self._metadata = {}  # store metadata here
         self._tod_list = None
-        self._skip_list = []
+        self._reject_list = []
         self._error_list = []
         self._done_list = []
         self._tod_id = None
         self._tod_name = None
         self._fb = None
         self._abspath = False
+        self._output_dir = "."
         self.comm = None
         self.rank = 0
-        self._output_dir = "."
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.setLevel(logging.INFO)
 
@@ -31,28 +34,50 @@ class TODLoop:
         self.logger.info('Added routine: %s' % routine.__class__.__name__)
         routine.add_context(self)  # make event loop accessible in each routine
 
-    def add_tod_list(self, tod_list_dir, abspath=False):
+    def add_tod_list(self, run_list, abspath=False):
         """Add a list of TODs as input
         @par:
-            tod_list_dir: string
+            run_list: string
             abspath: bool - if tod name is given in absolute path or not"""
-        with open(tod_list_dir, "r") as f:
-            self._tod_list = [line.split('\n')[0] for line in f.readlines()]
-            self._metadata['list'] = self._tod_list
+        self._tod_list = TODList.from_file(run_list)
 
         # set abspath flag
         self._abspath = abspath
 
-    def add_skip(self, skip_list):
-        self._skip_list = skip_list
+    @deprecated("Use add_reject_list instead")
+    def add_skip_list(self, skip_list):
+        self.add_reject_list(skip_list)
+
+    def add_reject_list(self, reject_list):
+        self._reject_list = TODList.from_file(reject_list)
+
+    def add_done_list(self, done_list):
+        self._done_list = TODList.from_file(done_list)
 
     def set_output_dir(self, output_dir):
         self._output_dir = output_dir
 
     def initialize(self):
-        """Initialize all routines"""
+        """Initialize the pipeline and all routines"""
+        # initialize the tod list
+        self.logger.info("Removing %d rejected tod from run list" % len(self._reject_list))
+        self._tod_list -= self._reject_list
+        if len(self._done_list) != 0:
+            self.logger.info("Removing %d tod already done from run list" % len(self._done_list))
+            self._tod_list -= self._done_list
+        # initialize all routines
         for routine in self._routines:
             routine.initialize()
+        # if output_dir is specified but not created, generating now
+        if self._output_dir and not os.path.exists(self._output_dir):
+            # if MPI is used
+            if self.comm:
+                if self.rank == 0:
+                    os.makedirs(self._output_dir)
+                self.comm.Barrier()
+            else:
+                if self.rank == 0:  # not pretty
+                    os.makedirs(self._output_dir)
 
     def execute(self, store):
         """Execute all routines"""
@@ -70,8 +95,9 @@ class TODLoop:
         # finalize all routines
         for routine in self._routines:
             routine.finalize()
-        # finalize the pipeline by dump useful stats
-        self._dump_stats()
+        # if output_dir is specified, dump the stats in the folder
+        if self._output_dir:
+            self._dump_stats()
 
     def run(self, start=0, end=None):
         """Main driver function to run the loop
@@ -84,9 +110,6 @@ class TODLoop:
         if not end:
             end = len(self._tod_list)
         for tod_id in range(start, end):
-            if tod_id in self._skip_list:
-                self.logger.info('TOD: %d in the skip_list, skipping ...' % tod_id)
-                continue  # skip if in skip list
             self._tod_id = tod_id
             self._tod_name = self._tod_list[tod_id]
             self.logger.info("TOD %d: %s" % (tod_id, self._tod_name))
@@ -187,17 +210,8 @@ class TODLoop:
 
     def _dump_stats(self):
         """Dump useful data to disk for debugging purpose"""
-        if self.comm:
-            error_lists = self.comm.gather(self._error_list, root=0)
-            done_lists = self.comm.gather(self._done_list, root=0)
-        else:
-            error_lists = self._error_list
-            done_lists = self._done_list
-        if self.rank == 0:
-            error_list = [tod for l in error_lists for tod in l]
-            append2file(error_list, os.path.join(self._output_dir, "error_list.txt"))
-            done_list = [tod for l in done_lists for tod in l]
-            append2file(done_list, os.path.join(self._output_dir, "done_list.txt"))
+        append2file(self._error_list, os.path.join(self._output_dir, "error_list.txt.%d" % self.rank))
+        append2file(self._done_list, os.path.join(self._output_dir, "done_list.txt.%d" % self.rank))
 
 
 class Routine:
