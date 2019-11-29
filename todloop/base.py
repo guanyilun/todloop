@@ -1,8 +1,13 @@
 import gc, os, numpy as np
+
 from moby2.util.database import TODList
 import traceback
 from deprecated import deprecated
+from profilehooks import profile
+from todloop.utils import append2file
+
 import logging
+import traceback
 logging.basicConfig(format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
 
 from todloop.utils import append2file
@@ -65,9 +70,11 @@ class TODLoop:
         if len(self._done_list) != 0:
             self.logger.info("Removing %d tod already done from run list" % len(self._done_list))
             self._tod_list -= self._done_list
+
         # initialize all routines
         for routine in self._routines:
             routine.initialize()
+
         # if output_dir is specified but not created, generating now
         if self._output_dir and not os.path.exists(self._output_dir):
             # if MPI is used
@@ -79,6 +86,7 @@ class TODLoop:
                 if self.rank == 0:  # not pretty
                     os.makedirs(self._output_dir)
 
+    @profile
     def execute(self, store):
         """Execute all routines"""
         for routine in self._routines:
@@ -141,6 +149,22 @@ class TODLoop:
         self.comm = comm
         self.rank = rank
         self.logger.info("Node @ rank=%d\t size=%d" % (rank, size))
+        # distribute tasks
+        if not end:
+            end = n_total
+        tasks = np.array_split(np.arange(start, end), n_workers)
+        start = tasks[rank][0]
+        end = tasks[rank][-1]+1
+        self.run(start=start, end=end)
+
+    def run_fparallel(self, start=0, end=None, n_workers=1, rank=0):
+        """Fake parallel, don't judge me"""
+        n_total = len(self._tod_list)
+        self.logger.info("Distributing %d tods to %d workers" % \
+                         (n_total, n_workers))
+        # setup mpi
+        self.rank = rank
+        self.logger.info("Node f@ rank=%d\t size=%d" % (rank, n_workers))
         # distribute tasks
         if not end:
             end = n_total
