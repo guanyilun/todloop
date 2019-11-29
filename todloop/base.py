@@ -57,20 +57,14 @@ class TODLoop:
         self._reject_list = TODList.from_file(reject_list)
 
     def add_done_list(self, done_list):
-        self._done_list = TODList.from_file(done_list)
+        if os.path.exists(done_list):
+            self._done_list = TODList.from_file(done_list)
 
     def set_output_dir(self, output_dir):
         self._output_dir = output_dir
 
     def initialize(self):
         """Initialize the pipeline and all routines"""
-        # initialize the tod list
-        self.logger.info("Removing %d rejected tod from run list" % len(self._reject_list))
-        self._tod_list -= self._reject_list
-        if len(self._done_list) != 0:
-            self.logger.info("Removing %d tod already done from run list" % len(self._done_list))
-            self._tod_list -= self._done_list
-
         # initialize all routines
         for routine in self._routines:
             routine.initialize()
@@ -107,12 +101,13 @@ class TODLoop:
         if self._output_dir:
             self._dump_stats()
 
-    def run(self, start=0, end=None):
+    def run(self, start=0, end=None, remove_done=True):
         """Main driver function to run the loop
         @param:
             start: starting tod_id (default 0)
             end:   ending tod_id (default None)"""
-
+        if remove_done:
+            self._check_done()
         self.initialize()
         # if end is not provided, run all
         if not end:
@@ -137,7 +132,16 @@ class TODLoop:
 
         self.finalize()
 
+    def _check_done(self):
+        # initialize the tod list
+        self.logger.info("Removing %d rejected tod from run list" % len(self._reject_list))
+        self._tod_list -= self._reject_list
+        if len(self._done_list) != 0:
+            self.logger.info("Removing %d tod already done from run list" % len(self._done_list))
+            self._tod_list -= self._done_list
+
     def run_parallel(self, start=0, end=None, n_workers=1):
+        self._check_done()
         n_total = len(self._tod_list)
         self.logger.info("Distributing %d tods to %d workers" % \
                          (n_total, n_workers))
@@ -155,10 +159,11 @@ class TODLoop:
         tasks = np.array_split(np.arange(start, end), n_workers)
         start = tasks[rank][0]
         end = tasks[rank][-1]+1
-        self.run(start=start, end=end)
+        self.run(start=start, end=end, remove_done=False)
 
     def run_fparallel(self, start=0, end=None, n_workers=1, rank=0):
         """Fake parallel, don't judge me"""
+        self._check_done()
         n_total = len(self._tod_list)
         self.logger.info("Distributing %d tods to %d workers" % \
                          (n_total, n_workers))
@@ -171,7 +176,7 @@ class TODLoop:
         tasks = np.array_split(np.arange(start, end), n_workers)
         start = tasks[rank][0]
         end = tasks[rank][-1]+1
-        self.run(start=start, end=end)
+        self.run(start=start, end=end, remove_done=False)
 
     def veto(self):
         """Veto a TOD from subsequent routines"""
