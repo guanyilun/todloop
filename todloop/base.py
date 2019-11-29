@@ -1,4 +1,5 @@
 import gc, os, numpy as np
+from profilehooks import profile
 from todloop.utils import append2file
 
 import logging
@@ -54,6 +55,7 @@ class TODLoop:
         for routine in self._routines:
             routine.initialize()
 
+    @profile
     def execute(self, store):
         """Execute all routines"""
         for routine in self._routines:
@@ -126,6 +128,22 @@ class TODLoop:
         end = tasks[rank][-1]+1
         self.run(start=start, end=end)
 
+    def run_fparallel(self, start=0, end=None, n_workers=1, rank=0):
+        """Fake parallel, don't judge me"""
+        n_total = len(self._tod_list)
+        self.logger.info("Distributing %d tods to %d workers" % \
+                         (n_total, n_workers))
+        # setup mpi
+        self.rank = rank
+        self.logger.info("Node f@ rank=%d\t size=%d" % (rank, n_workers))
+        # distribute tasks
+        if not end:
+            end = n_total
+        tasks = np.array_split(np.arange(start, end), n_workers)
+        start = tasks[rank][0]
+        end = tasks[rank][-1]+1
+        self.run(start=start, end=end)
+
     def veto(self):
         """Veto a TOD from subsequent routines"""
         self._veto = True
@@ -187,17 +205,11 @@ class TODLoop:
 
     def _dump_stats(self):
         """Dump useful data to disk for debugging purpose"""
-        if self.comm:
-            error_lists = self.comm.gather(self._error_list, root=0)
-            done_lists = self.comm.gather(self._done_list, root=0)
-        else:
-            error_lists = self._error_list
-            done_lists = self._done_list
-        if self.rank == 0:
-            error_list = [tod for l in error_lists for tod in l]
-            append2file(error_list, os.path.join(self._output_dir, "error_list.txt"))
-            done_list = [tod for l in done_lists for tod in l]
-            append2file(done_list, os.path.join(self._output_dir, "done_list.txt"))
+        error_list = self._error_list
+        done_list = self._done_list
+
+        append2file(error_list, os.path.join(self._output_dir, "error_list.txt.%d" % self.rank))
+        append2file(done_list, os.path.join(self._output_dir, "done_list.txt.%d" % self.rank))
 
 
 class Routine:
