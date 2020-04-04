@@ -1,4 +1,5 @@
-import gc, os, numpy as np
+import gc, os, os.path as op
+import numpy as np
 
 from moby2.util.database import TODList
 import traceback
@@ -21,7 +22,6 @@ class TODLoop:
         self._metadata = {}  # store metadata here
         self._tod_list = None
         self._reject_list = []
-        self._error_list = []
         self._done_list = []
         self._tod_id = None
         self._tod_name = None
@@ -57,7 +57,7 @@ class TODLoop:
         self._reject_list = TODList.from_file(reject_list)
 
     def add_done_list(self, done_list):
-        if os.path.exists(done_list):
+        if op.exists(done_list):
             self._done_list = TODList.from_file(done_list)
 
     def set_output_dir(self, output_dir):
@@ -70,7 +70,7 @@ class TODLoop:
             routine.initialize()
 
         # if output_dir is specified but not created, generating now
-        if self._output_dir and not os.path.exists(self._output_dir):
+        if self._output_dir and not op.exists(self._output_dir):
             # if MPI is used
             if self.comm:
                 if self.rank == 0:
@@ -89,7 +89,6 @@ class TODLoop:
                 break
             else:
                 routine.execute(store)
-
         self._veto = False
 
     def finalize(self):
@@ -97,9 +96,6 @@ class TODLoop:
         # finalize all routines
         for routine in self._routines:
             routine.finalize()
-        # if output_dir is specified, dump the stats in the folder
-        if self._output_dir:
-            self._dump_stats()
 
     def run(self, start=0, end=None, remove_done=True):
         """Main driver function to run the loop
@@ -121,16 +117,31 @@ class TODLoop:
             store = DataStore()
             try:
                 self.execute(store)
-                self._done_list.append(self._tod_name)
             except Exception as e:
                 self.logger.error("%s occurred, skipping..." % type(e))
-                self._error_list.append(self._tod_name)
                 traceback.print_exc()
-
+                # write to error log file
+                self._dump_error(e)
             # clean memory
             gc.collect()
 
         self.finalize()
+
+    def _dump_error(self, e):
+        if self.output_dir:
+            errfile = op.join(self.output_dir,
+                              "error_list.txt."+self.rank)
+            if op.exists(errfile):
+                mode = "a"
+            else:
+                mode = "w"
+            line = "rank {rank:>3d}: {err_type:15}: {err_msg:45}\n".format(
+                rank=self.rank,
+                err_type=type(e),
+                err_msg=str(e)
+            )
+            with open(errfile, mode) as f:
+                f.write(line)
 
     def _check_done(self):
         # initialize the tod list
@@ -236,11 +247,6 @@ class TODLoop:
                 return None
         else:  # if a key is not provided, return the entire metadata
             return self._metadata
-
-    def _dump_stats(self):
-        """Dump useful data to disk for debugging purpose"""
-        append2file(self._error_list, os.path.join(self._output_dir, "error_list.txt.%d" % self.rank))
-        append2file(self._done_list, os.path.join(self._output_dir, "done_list.txt.%d" % self.rank))
 
 
 class Routine:
