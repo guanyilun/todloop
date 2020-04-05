@@ -128,16 +128,17 @@ class TODLoop:
         self.finalize()
 
     def _dump_error(self, e):
-        if self.output_dir:
-            errfile = op.join(self.output_dir,
-                              "error_list.txt."+self.rank)
+        if self._output_dir:
+            errfile = op.join(self._output_dir,
+                              "error_list.txt.%d" % self.rank)
             if op.exists(errfile):
                 mode = "a"
             else:
                 mode = "w"
-            line = "rank {rank:>3d}: {err_type:15}: {err_msg:45}\n".format(
+            line = "{rank:>3d} {tod} {err_type:>10s}: {err_msg:50s}\n".format(
                 rank=self.rank,
-                err_type=type(e),
+                tod=self._tod_name,
+                err_type=type(e).__name__,
                 err_msg=str(e)
             )
             with open(errfile, mode) as f:
