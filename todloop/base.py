@@ -135,7 +135,7 @@ class TODLoop:
                 mode = "a"
             else:
                 mode = "w"
-            line = "{rank:>3d} {tod} {err_type:>10s}: {err_msg:50s}\n".format(
+            line = "{rank:>3d} {tod} {err_type:>20s}: {err_msg:50s}\n".format(
                 rank=self.rank,
                 tod=self._tod_name,
                 err_type=type(e).__name__,
